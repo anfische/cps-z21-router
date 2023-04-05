@@ -5,7 +5,9 @@
 
 package de.mydevcloud.cps.z21.router;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import java.util.Arrays;
+import java.util.List;
 import z21Drive.LocoAddressOutOfRangeException;
 import z21Drive.Z21;
 
@@ -21,16 +23,13 @@ import z21Drive.broadcasts.BroadcastFlagHandler;
 import z21Drive.broadcasts.BroadcastFlags;
 
 import org.eclipse.paho.client.mqttv3.*;
-import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
-
+import z21Drive.actions.Z21Action;
 /**
  *
  * @author andreas
  */
 
 public class CpsZ21Router {
-    
-    private static String MQTT_SERVER = "";
         
     public static void main(String[] args) {
         final Z21 z21 = Z21.instance;
@@ -45,7 +44,55 @@ public class CpsZ21Router {
 
             @Override
             public void messageArrived(String topic, MqttMessage message) throws Exception {
-                System.out.println(topic + ": " + Arrays.toString(message.getPayload()));     
+                //System.out.println(topic + ": " + message.toString());
+                List<String> topicList = Arrays.asList(topic.split("/"));
+
+                switch(topicList.get(0)){
+                    case "turnout":
+                        if ("get".equals(topicList.get(1))) {
+                            System.out.println("Turnout Info from z21 received: ");
+                            System.out.println("Turnout " + topicList.get(2) + ": " + message.toString());
+                        } else if ("set".equals(topicList.get(1))) {
+                            System.out.println("Turnout Action received, forward to z21");
+                            int address = 99;
+                            byte position = 3;
+                            try {
+                                address = Integer.parseInt(topicList.get(2));
+                                // address -1 to adapt to z21 addresses
+                                address--;
+                                position = (byte) Integer.parseInt(message.toString());
+                            } catch (NumberFormatException e) {
+                                e.printStackTrace();
+                            }                            
+                            z21.sendActionToZ21(new Z21ActionLanXSetTurnout(address,position, true));
+                            try {
+                                Thread.sleep(150);
+                            } catch (InterruptedException e){
+                                Thread.currentThread().interrupt();
+                            }
+                            z21.sendActionToZ21(new Z21ActionLanXSetTurnout(address,position, false));
+                        }
+                        break;
+                    case "train":
+                        if("set".equals(topicList.get(1))) {
+                            System.out.println("Train command received:");
+                            System.out.println("Address: " + topicList.get(2) + " | Speed: " + message.toString());
+                            int address = 99;
+                            int speed = 0;
+                            try {
+                                address = Integer.parseInt(topicList.get(2));
+                                speed = Integer.parseInt(message.toString());
+                            } catch (NumberFormatException e) {
+                                e.printStackTrace();
+                            }
+                            z21.sendActionToZ21(new Z21ActionSetLocoDrive(address, speed, 3, true));
+                        }
+                        break;
+                    default:
+                        System.out.println("Unknown MQTT message received");
+                        break;
+                }
+                
             }
 
             @Override
@@ -53,6 +100,8 @@ public class CpsZ21Router {
             }
         };
         mqtt.createCallback(mqttCallback);
+        mqtt.subscribe("turnout/#");
+        mqtt.subscribe("train/set/#");
         
         
 
@@ -64,9 +113,14 @@ public class CpsZ21Router {
                 	
                 	
                     Z21BroadcastLanXTurnoutsInfo t = (Z21BroadcastLanXTurnoutsInfo) broadcast;
-                    System.out.println("Turnout address: " + t.getTurnoutAddress());
-                    System.out.println("Position: " + t.getPosition());
-                    mqtt.publish("", new MqttMessage());
+                    //DEBUG Output
+                    //System.out.println("Turnout address: " + t.getTurnoutAddress());
+                    //System.out.println("Position: " + t.getPosition());
+                    
+                    // address +1 and position -1
+                    String sTopic = "turnout/get/" + Integer.toString(t.getTurnoutAddress()+1);
+                    byte[] message = Integer.toString(t.getPosition()-1).getBytes(UTF_8);
+                    mqtt.publish(sTopic, new MqttMessage(message));
                 }
             }
 
@@ -86,7 +140,7 @@ public class CpsZ21Router {
                     Z21BroadcastLanRmBusDataChanged r = (Z21BroadcastLanRmBusDataChanged) broadcast;
                     //System.out.println(r.getFeedbackStatusString());
                     try{
-                        fb.update(r.getFeedbackStatus()[0]);
+                        fb.update(r.getFeedbackStatus()[0], mqtt);
                     } catch (Exception e){
                         e.printStackTrace();
                     }

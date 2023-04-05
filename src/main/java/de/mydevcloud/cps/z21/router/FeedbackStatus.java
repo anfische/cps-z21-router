@@ -4,8 +4,10 @@
  */
 package de.mydevcloud.cps.z21.router;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import java.time.Instant;
 import java.time.Duration;
+import org.eclipse.paho.client.mqttv3.MqttMessage;
 
 /**
  *
@@ -20,7 +22,7 @@ public class FeedbackStatus {
         }
     }
     
-    public void update(int[] newFeedback) throws Exception{
+    public void update(int[] newFeedback, Mqtt mqtt) throws Exception{
         if(newFeedback.length == 8){
             for(int i = 0; i < 8; i++){
                 if(compareTimestampIsNew(fbArray[i].getTimestamp())){
@@ -29,6 +31,9 @@ public class FeedbackStatus {
                         fbArray[i].setIntStatus(newFeedback[i]);
                         fbArray[i].setTimestamp();
                         System.out.println("Abschnitt " + (i+1) + ": " + fbArray[i].getIntStatus());
+                        String topic = "section/" + (i+1) + "/status";
+                        byte[] message = Integer.toString(fbArray[i].getIntStatus()).getBytes(UTF_8);
+                        mqtt.publish(topic, new MqttMessage(message));
                     }
                 }
             }
@@ -41,7 +46,7 @@ public class FeedbackStatus {
         boolean isNew = false;
         Instant now = Instant.now();
         long delta = Duration.between(lastFeedbackTimestamp, now).toMillis();
-        if(delta > 3000){
+        if(delta > 5000){
             isNew = true;
         } 
         return isNew;
